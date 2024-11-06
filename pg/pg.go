@@ -110,15 +110,15 @@ func (pg *Postgres) NewTenantSchemaGroups(ctx context.Context, dbName string, sc
 
 	schemaGroups := tenantSchemaGroupNames(dbName, schemaName)
 
-	dropOwnedByAdmin := fmt.Sprintf("DROP OWNED BY %s;", schemaGroups.Admin)
+	dropOwnedByAdmin := fmt.Sprintf("SET ROLE %s; DROP OWNED BY %s; RESET ROLE;", schemaGroups.Admin, schemaGroups.Admin)
 	dropAdmin := fmt.Sprintf("DROP ROLE IF EXISTS %s;", schemaGroups.Admin)
 	createAdmin := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", schemaGroups.Admin)
 
-	dropOwnedByRW := fmt.Sprintf("DROP OWNED BY %s;", schemaGroups.ReadWrite)
+	dropOwnedByRW := fmt.Sprintf("SET ROLE %s; DROP OWNED BY %s; RESET ROLE;", schemaGroups.ReadWrite, schemaGroups.ReadWrite)
 	dropRW := fmt.Sprintf("DROP ROLE IF EXISTS %s;", schemaGroups.ReadWrite)
 	createRW := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", schemaGroups.ReadWrite)
 
-	dropOwnedByRO := fmt.Sprintf("DROP OWNED BY %s;", schemaGroups.ReadOnly)
+	dropOwnedByRO := fmt.Sprintf("SET ROLE %s; DROP OWNED BY %s; RESET ROLE;", schemaGroups.ReadOnly, schemaGroups.ReadOnly)
 	dropRO := fmt.Sprintf("DROP ROLE IF EXISTS %s;", schemaGroups.ReadOnly)
 	createRO := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", schemaGroups.ReadOnly)
 
@@ -142,17 +142,17 @@ func (pg *Postgres) NewTenantSchemaUsers(ctx context.Context, dbName string, sch
 	schemaGroups := tenantSchemaGroupNames(dbName, schemaName)
 	schemaUsers := newTenantSchemaUserCredentials(dbName, schemaName)
 
-	dropOwnedByAdmin := fmt.Sprintf("DROP OWNED BY %s;", schemaUsers.Admin.Username)
+	dropOwnedByAdmin := fmt.Sprintf("SET ROLE %s; DROP OWNED BY %s; RESET ROLE;", schemaUsers.Admin.Username, schemaUsers.Admin.Username)
 	dropAdmin := fmt.Sprintf("DROP ROLE IF EXISTS %s;", schemaUsers.Admin.Username)
 	createAdmin := fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s';", schemaUsers.Admin.Username, schemaUsers.Admin.Password)
 	grantAdmin := fmt.Sprintf("GRANT %s TO %s;", schemaGroups.Admin, schemaUsers.Admin.Username)
 
-	dropOwnedByRW := fmt.Sprintf("DROP OWNED BY %s;", schemaUsers.ReadWrite.Username)
+	dropOwnedByRW := fmt.Sprintf("SET ROLE %s; DROP OWNED BY %s; RESET ROLE;", schemaUsers.ReadWrite.Username, schemaUsers.ReadWrite.Username)
 	dropRW := fmt.Sprintf("DROP ROLE IF EXISTS %s;", schemaUsers.ReadWrite.Username)
 	createRW := fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s';", schemaUsers.ReadWrite.Username, schemaUsers.ReadWrite.Password)
 	grantRW := fmt.Sprintf("GRANT %s TO %s;", schemaGroups.ReadWrite, schemaUsers.ReadWrite.Username)
 
-	dropOwnedByRO := fmt.Sprintf("DROP OWNED BY %s;", schemaUsers.ReadOnly.Username)
+	dropOwnedByRO := fmt.Sprintf("SET ROLE %s; DROP OWNED BY %s; RESET ROLE;", schemaUsers.ReadOnly.Username, schemaUsers.ReadOnly.Username)
 	dropRO := fmt.Sprintf("DROP ROLE IF EXISTS %s;", schemaUsers.ReadOnly.Username)
 	createRO := fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s';", schemaUsers.ReadOnly.Username, schemaUsers.ReadOnly.Password)
 	grantRO := fmt.Sprintf("GRANT %s TO %s;", schemaGroups.ReadOnly, schemaUsers.ReadOnly.Username)
