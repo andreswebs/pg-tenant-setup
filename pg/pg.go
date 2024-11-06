@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -31,6 +32,11 @@ func Connect(ctx context.Context, connString string) (*Postgres, error) {
 		pgInstance = &Postgres{db}
 	})
 
+	outSQLFile := os.Getenv(envVarOutSQLFile)
+	if outSQLFile != "" {
+		truncateFile(outSQLFile)
+	}
+
 	return pgInstance, nil
 }
 
@@ -40,16 +46,24 @@ func (pg *Postgres) ConnectDB(ctx context.Context, connConfig ConnectDBConfig) (
 		config.ConnConfig.Database = connConfig.DBName
 	}
 
+	config.BeforeConnect = func(ctx context.Context, connConfig *pgx.ConnConfig) (err error) {
+		outSQLFile := os.Getenv(envVarOutSQLFile)
+		if outSQLFile != "" {
+			appendToFile(outSQLFile, fmt.Sprintf("-- switching to database %s\n", connConfig.Database))
+		}
+		return
+	}
+
 	if connConfig.RoleName != "" {
-		config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		config.AfterConnect = func(ctx context.Context, conn *pgx.Conn) (err error) {
 			setRole := fmt.Sprintf("SET ROLE %s;", connConfig.RoleName)
-			conn.Exec(ctx, setRole)
-			return nil
+			_, err = pg.RunExec(conn, ctx, setRole)
+			return
 		}
 
 		config.BeforeClose = func(conn *pgx.Conn) {
 			resetRole := fmt.Sprintf("RESET ROLE;")
-			conn.Exec(ctx, resetRole)
+			pg.RunExec(conn, ctx, resetRole)
 		}
 	}
 
@@ -60,6 +74,25 @@ func (pg *Postgres) ConnectDB(ctx context.Context, connConfig ConnectDBConfig) (
 	if err != nil {
 		err = fmt.Errorf("unable to create connection pool: %w", err)
 		return
+	}
+
+	return
+}
+
+func (pg *Postgres) RunExec(x PGConnExecutor, ctx context.Context, sql string, arguments ...any) (tag pgconn.CommandTag, err error) {
+	tag, err = x.Exec(ctx, sql, arguments...)
+	if err != nil {
+		err = fmt.Errorf("%w\nwith sql:\n%s", err, sql)
+		haltOnError := os.Getenv(envVarHaltOnError)
+		if haltOnError != "" {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	outSQLFile := os.Getenv(envVarOutSQLFile)
+	if outSQLFile != "" {
+		appendToFile(outSQLFile, fmt.Sprintf("%s\n", sql))
 	}
 
 	return
@@ -89,17 +122,17 @@ func (pg *Postgres) NewTenantSchemaGroups(ctx context.Context, dbName string, sc
 	dropRO := fmt.Sprintf("DROP ROLE IF EXISTS %s;", schemaGroups.ReadOnly)
 	createRO := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", schemaGroups.ReadOnly)
 
-	pg.db.Exec(ctx, dropOwnedByAdmin)
-	pg.db.Exec(ctx, dropAdmin)
-	pg.db.Exec(ctx, createAdmin)
+	pg.RunExec(pg.db, ctx, dropOwnedByAdmin)
+	pg.RunExec(pg.db, ctx, dropAdmin)
+	pg.RunExec(pg.db, ctx, createAdmin)
 
-	pg.db.Exec(ctx, dropOwnedByRW)
-	pg.db.Exec(ctx, dropRW)
-	pg.db.Exec(ctx, createRW)
+	pg.RunExec(pg.db, ctx, dropOwnedByRW)
+	pg.RunExec(pg.db, ctx, dropRW)
+	pg.RunExec(pg.db, ctx, createRW)
 
-	pg.db.Exec(ctx, dropOwnedByRO)
-	pg.db.Exec(ctx, dropRO)
-	pg.db.Exec(ctx, createRO)
+	pg.RunExec(pg.db, ctx, dropOwnedByRO)
+	pg.RunExec(pg.db, ctx, dropRO)
+	pg.RunExec(pg.db, ctx, createRO)
 
 	return schemaGroups
 }
@@ -124,32 +157,39 @@ func (pg *Postgres) NewTenantSchemaUsers(ctx context.Context, dbName string, sch
 	createRO := fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s';", schemaUsers.ReadOnly.Username, schemaUsers.ReadOnly.Password)
 	grantRO := fmt.Sprintf("GRANT %s TO %s;", schemaGroups.ReadOnly, schemaUsers.ReadOnly.Username)
 
-	pg.db.Exec(ctx, dropOwnedByAdmin)
-	pg.db.Exec(ctx, dropAdmin)
-	pg.db.Exec(ctx, createAdmin)
-	pg.db.Exec(ctx, grantAdmin)
+	pg.RunExec(pg.db, ctx, dropOwnedByAdmin)
+	pg.RunExec(pg.db, ctx, dropAdmin)
+	pg.RunExec(pg.db, ctx, createAdmin)
+	pg.RunExec(pg.db, ctx, grantAdmin)
 
-	pg.db.Exec(ctx, dropOwnedByRW)
-	pg.db.Exec(ctx, dropRW)
-	pg.db.Exec(ctx, createRW)
-	pg.db.Exec(ctx, grantRW)
+	pg.RunExec(pg.db, ctx, dropOwnedByRW)
+	pg.RunExec(pg.db, ctx, dropRW)
+	pg.RunExec(pg.db, ctx, createRW)
+	pg.RunExec(pg.db, ctx, grantRW)
 
-	pg.db.Exec(ctx, dropOwnedByRO)
-	pg.db.Exec(ctx, dropRO)
-	pg.db.Exec(ctx, createRO)
-	pg.db.Exec(ctx, grantRO)
+	pg.RunExec(pg.db, ctx, dropOwnedByRO)
+	pg.RunExec(pg.db, ctx, dropRO)
+	pg.RunExec(pg.db, ctx, createRO)
+	pg.RunExec(pg.db, ctx, grantRO)
 
 	return schemaUsers
 }
 
 func (pg *Postgres) NewTenantDB(ctx context.Context, dbName string) (err error) {
-	ownerRole := fmt.Sprintf("%s%s", dbName, ownerSuffix)
+	ownerRole := tenantOwnerName(dbName)
+
+	var currentRole string
+	err = pg.db.QueryRow(ctx, "SELECT current_role").Scan(&currentRole)
+	if err != nil {
+		return
+	}
 
 	// begin definitions
 
-	dropDB := fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE);", dbName)
-	dropOwned := fmt.Sprintf("DROP OWNED BY %s;", ownerRole)
+	alterDBToCurrent := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s;", dbName, currentRole)
+	dropOwned := fmt.Sprintf("SET ROLE %s; DROP OWNED BY %s; RESET ROLE;", ownerRole, ownerRole)
 	dropOwner := fmt.Sprintf("DROP ROLE IF EXISTS %s;", ownerRole)
+	dropDB := fmt.Sprintf("DROP DATABASE IF EXISTS %s WITH (FORCE);", dbName)
 	createOwner := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", ownerRole)
 	createDB := fmt.Sprintf("CREATE DATABASE %s;", dbName)
 	alterDB := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s;", dbName, ownerRole)
@@ -161,34 +201,36 @@ func (pg *Postgres) NewTenantDB(ctx context.Context, dbName string) (err error) 
 
 	// begin executions
 
-	pg.db.Exec(ctx, dropDB)
-	pg.db.Exec(ctx, dropOwned)
-	pg.db.Exec(ctx, dropOwner)
+	pg.RunExec(pg.db, ctx, alterDBToCurrent)
+	pg.RunExec(pg.db, ctx, dropDB)
+	pg.RunExec(pg.db, ctx, dropOwned)
+	pg.RunExec(pg.db, ctx, dropOwner)
 
-	_, err = pg.db.Exec(ctx, createOwner)
+	_, err = pg.RunExec(pg.db, ctx, createOwner)
 	if err != nil {
 		err = fmt.Errorf("unable to create owner role: %w", err)
 		return
 	}
 
-	_, err = pg.db.Exec(ctx, createDB)
+	_, err = pg.RunExec(pg.db, ctx, createDB)
 	if err != nil {
 		err = fmt.Errorf("unable to create database: %w", err)
-		pg.db.Exec(ctx, dropOwner)
+		pg.RunExec(pg.db, ctx, dropOwner)
 		return
 	}
 
-	_, err = pg.db.Exec(ctx, alterDB)
+	_, err = pg.RunExec(pg.db, ctx, alterDB)
 	if err != nil {
 		err = fmt.Errorf("unable to set database owner: %w", err)
-		pg.db.Exec(ctx, dropDB)
-		pg.db.Exec(ctx, dropOwner)
+		pg.RunExec(pg.db, ctx, dropDB)
+		pg.RunExec(pg.db, ctx, dropOwned)
+		pg.RunExec(pg.db, ctx, dropOwner)
 		return
 	}
 
 	// execute revoke all privileges from PUBLIC
 
-	pg.db.Exec(ctx, revokeDBPublic)
+	pg.RunExec(pg.db, ctx, revokeDBPublic)
 
 	tmpPool, err := pg.ConnectDB(ctx, ConnectDBConfig{DBName: dbName})
 	if err != nil {
@@ -205,7 +247,7 @@ func (pg *Postgres) NewTenantDB(ctx context.Context, dbName string) (err error) 
 
 	defer conn.Release()
 
-	conn.Exec(ctx, revokeSchemaPublic)
+	pg.RunExec(conn, ctx, revokeSchemaPublic)
 
 	return
 }
@@ -218,7 +260,7 @@ func (pg *Postgres) NewTenantSchema(ctx context.Context, schemaName string, conn
 	}
 
 	dbName := connConfig.DBName
-	ownerRole := fmt.Sprintf("%s%s", dbName, ownerSuffix)
+	ownerRole := tenantOwnerName(dbName)
 
 	if connConfig.RoleName == "" {
 		connConfig.RoleName = ownerRole
@@ -231,7 +273,7 @@ func (pg *Postgres) NewTenantSchema(ctx context.Context, schemaName string, conn
 		"GRANT CONNECT, TEMPORARY ON DATABASE %s TO %s;",
 		dbName, fmt.Sprintf("%s, %s, %s", tenantGroups.Admin, tenantGroups.ReadWrite, tenantGroups.ReadOnly),
 	)
-	pg.db.Exec(ctx, grantDBAccess)
+	pg.RunExec(pg.db, ctx, grantDBAccess)
 
 	tmpPool, err := pg.ConnectDB(ctx, connConfig)
 	if err != nil {
@@ -303,9 +345,9 @@ func (pg *Postgres) NewTenantSchema(ctx context.Context, schemaName string, conn
 		defaultAlter, tenantGroups.ReadWrite,
 	)
 
-	conn.Exec(ctx, dropSchema)
+	pg.RunExec(conn, ctx, dropSchema)
 
-	_, err = conn.Exec(ctx, createSchema)
+	_, err = pg.RunExec(conn, ctx, createSchema)
 	if err != nil {
 		err = fmt.Errorf("unable to create schema: %w", err)
 		return
@@ -313,19 +355,19 @@ func (pg *Postgres) NewTenantSchema(ctx context.Context, schemaName string, conn
 
 	// begin executions
 
-	conn.Exec(ctx, revokeCreate)
-	conn.Exec(ctx, grantSchemaAdminCreate)
-	conn.Exec(ctx, grantSchemaAdminTables)
-	conn.Exec(ctx, grantSchemaAdminSequences)
+	pg.RunExec(conn, ctx, revokeCreate)
+	pg.RunExec(conn, ctx, grantSchemaAdminCreate)
+	pg.RunExec(conn, ctx, grantSchemaAdminTables)
+	pg.RunExec(conn, ctx, grantSchemaAdminSequences)
 
-	conn.Exec(ctx, grantSchemaUsage)
-	conn.Exec(ctx, grantTablesRead)
-	conn.Exec(ctx, grantSequencesRead)
+	pg.RunExec(conn, ctx, grantSchemaUsage)
+	pg.RunExec(conn, ctx, grantTablesRead)
+	pg.RunExec(conn, ctx, grantSequencesRead)
 
-	conn.Exec(ctx, grantDefaultSequencesRead)
-	conn.Exec(ctx, grantDefaultSequencesWrite)
-	conn.Exec(ctx, grantDefaultTablesRead)
-	conn.Exec(ctx, grantDefaultTablesReadWrite)
+	pg.RunExec(conn, ctx, grantDefaultSequencesRead)
+	pg.RunExec(conn, ctx, grantDefaultSequencesWrite)
+	pg.RunExec(conn, ctx, grantDefaultTablesRead)
+	pg.RunExec(conn, ctx, grantDefaultTablesReadWrite)
 
 	tenantUsers := pg.NewTenantSchemaUsers(ctx, dbName, schemaName)
 

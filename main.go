@@ -11,6 +11,8 @@ import (
 
 type CommonArgs struct {
 	ConnectionString string `cli:"-c, --connection-string, PostgreSQL connection string" env:"PG_TENANT_SETUP_CONNECTION_STRING"`
+	OutputSQLFile    string `cli:"#E, File name to save executed SQL commands to" env:"PG_TENANT_SETUP_OUTPUT_SQL_FILE"`
+	HaltOnError      string `cli:"#E, Whether to halt SQL further execution on error" env:"PG_TENANT_SETUP_HALT_ON_ERROR"`
 	DBName           string `cli:"#R, -d, --database-name, Database name"`
 }
 
@@ -52,7 +54,7 @@ func createDB() {
 func createSchema() {
 	var args struct {
 		SchemaName            string `cli:"#R, -s, --schema-name, Schema name"`
-		OutputCredentialsFile string `cli:"#E, File name to save schema users credentials" env:"PG_TENANT_SETUP_OUTPUT_CREDENTIALS_FILE"`
+		OutputCredentialsFile string `cli:"#E, File name to save schema users credentials to" env:"PG_TENANT_SETUP_OUTPUT_CREDENTIALS_FILE"`
 		CommonArgs
 	}
 	mcli.Parse(&args)

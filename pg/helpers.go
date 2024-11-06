@@ -3,9 +3,15 @@ package pg
 import (
 	"crypto/rand"
 	"fmt"
+	"log"
 	"math/big"
+	"os"
 	"strings"
 )
+
+func tenantOwnerName(dbName string) string {
+	return fmt.Sprintf("%s%s", dbName, ownerSuffix)
+}
 
 func tenantSchemaPrefix(dbName string, schemaName string) string {
 	return fmt.Sprintf("%s_%s", dbName, schemaName)
@@ -106,4 +112,24 @@ func GenerateRandomPassword(config PasswordConfig) (string, error) {
 	}
 
 	return string(password), nil
+}
+
+func appendToFile(filename string, content string) {
+	f, err := os.OpenFile(filename,
+		os.O_APPEND|os.O_CREATE|os.O_WRONLY, outFileMode)
+	if err != nil {
+		log.Println(err)
+	}
+
+	defer f.Close()
+
+	if _, err := f.WriteString(content); err != nil {
+		log.Println(err)
+	}
+}
+
+func truncateFile(filename string) {
+	if fErr := os.Truncate(filename, 0); fErr != nil {
+		log.Printf("failed to truncate: %v", fErr)
+	}
 }
