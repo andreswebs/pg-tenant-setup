@@ -16,7 +16,7 @@ type PasswordConfig struct {
 	UseLetters     bool
 	UseSpecial     bool
 	UseNum         bool
-	ExcludeSpecial string `default:""`
+	ExcludeSpecial string `default:"@/"`
 }
 
 type ConnectDBConfig struct {
@@ -30,13 +30,13 @@ type UserCredentials struct {
 }
 
 type SchemaGroups struct {
-	Admin     string
-	ReadOnly  string
-	ReadWrite string
+	Admin     string `json:"admin"`
+	ReadWrite string `json:"readwrite"`
+	ReadOnly  string `json:"readonly"`
 }
 
 type SchemaUsers struct {
 	Admin     UserCredentials `json:"admin"`
-	ReadOnly  UserCredentials `json:"readonly"`
 	ReadWrite UserCredentials `json:"readwrite"`
+	ReadOnly  UserCredentials `json:"readonly"`
 }

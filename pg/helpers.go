@@ -14,11 +14,15 @@ func tenantSchemaPrefix(dbName string, schemaName string) string {
 func tenantSchemaGroupNames(dbName string, schemaName string) SchemaGroups {
 	tenantSchemaPrefix := tenantSchemaPrefix(dbName, schemaName)
 
-	Admin := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, schemaAdminSuffix, groupSuffix)
-	ReadWrite := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, rwSuffix, groupSuffix)
-	ReadOnly := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, roSuffix, groupSuffix)
+	admin := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, schemaAdminSuffix, groupSuffix)
+	readwrite := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, rwSuffix, groupSuffix)
+	readonly := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, roSuffix, groupSuffix)
 
-	return SchemaGroups{Admin, ReadOnly, ReadWrite}
+	return SchemaGroups{
+		Admin:     admin,
+		ReadWrite: readwrite,
+		ReadOnly:  readonly,
+	}
 }
 
 func newTenantSchemaUserCredentials(dbName string, schemaName string) SchemaUsers {
@@ -33,29 +37,34 @@ func newTenantSchemaUserCredentials(dbName string, schemaName string) SchemaUser
 	roUsername := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, roSuffix, userSuffix)
 	roPassword, _ := GenerateRandomPassword(PasswordConfig{})
 
-	Admin := UserCredentials{
+	admin := UserCredentials{
 		Username: adminUsername,
 		Password: adminPassword,
 	}
 
-	ReadWrite := UserCredentials{
+	readwrite := UserCredentials{
 		Username: rwUsername,
 		Password: rwPassword,
 	}
 
-	ReadOnly := UserCredentials{
+	readonly := UserCredentials{
 		Username: roUsername,
 		Password: roPassword,
 	}
 
-	return SchemaUsers{Admin, ReadWrite, ReadOnly}
+	return SchemaUsers{
+		Admin:     admin,
+		ReadWrite: readwrite,
+		ReadOnly:  readonly,
+	}
 }
 
 func GenerateRandomPassword(config PasswordConfig) (string, error) {
 	const (
-		letters      = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-		numbers      = "0123456789"
-		specialChars = "!#$%^&*()-_=+[]{}|;:,.<>?~`"
+		letters       = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		numbers       = "0123456789"
+		specialChars  = "!#$%^&*()-_=+[]{}|;:,.<>?~`"
+		defaultLength = 32
 	)
 
 	var charset string
@@ -84,7 +93,7 @@ func GenerateRandomPassword(config PasswordConfig) (string, error) {
 	}
 
 	if config.Length == 0 {
-		config.Length = 32
+		config.Length = defaultLength
 	}
 
 	password := make([]byte, config.Length)
