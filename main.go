@@ -14,6 +14,7 @@ type CommonArgs struct {
 	OutputSQLFile    string `cli:"#E, File name to save executed SQL commands to" env:"PG_TENANT_SETUP_OUTPUT_SQL_FILE"`
 	HaltOnError      string `cli:"#E, Whether to halt SQL further execution on error" env:"PG_TENANT_SETUP_HALT_ON_ERROR"`
 	DBName           string `cli:"#R, -d, --database-name, Database name"`
+	TenantName       string `cli:"-t, --tenant-name, Tenant name"`
 }
 
 func main() {
@@ -44,7 +45,7 @@ func createDB() {
 		os.Exit(1)
 	}
 
-	err = pgInstance.NewTenantDB(ctx, args.DBName)
+	err = pgInstance.NewTenantDB(ctx, args.DBName, args.TenantName)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "unable to create new tenant objects: %v\n", err)
 		os.Exit(1)
@@ -74,7 +75,7 @@ func createSchema() {
 		os.Exit(1)
 	}
 
-	err = pgInstance.NewTenantSchema(ctx, args.SchemaName, pg.ConnectDBConfig{DBName: args.DBName})
+	err = pgInstance.NewTenantSchema(ctx, args.SchemaName, args.TenantName, pg.ConnectDBConfig{DBName: args.DBName})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "unable to create new tenant objects: %v\n", err)
 		os.Exit(1)

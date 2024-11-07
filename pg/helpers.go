@@ -3,22 +3,21 @@ package pg
 import (
 	"crypto/rand"
 	"fmt"
-	"log"
 	"math/big"
 	"os"
 	"strings"
 )
 
-func tenantOwnerName(dbName string) string {
-	return fmt.Sprintf("%s%s", dbName, ownerSuffix)
+func tenantOwnerName(roleNamePrefix string) string {
+	return fmt.Sprintf("%s%s", roleNamePrefix, ownerSuffix)
 }
 
-func tenantSchemaPrefix(dbName string, schemaName string) string {
-	return fmt.Sprintf("%s_%s", dbName, schemaName)
+func tenantSchemaPrefix(roleNamePrefix string, schemaName string) string {
+	return fmt.Sprintf("%s_%s", roleNamePrefix, schemaName)
 }
 
-func tenantSchemaGroupNames(dbName string, schemaName string) SchemaGroups {
-	tenantSchemaPrefix := tenantSchemaPrefix(dbName, schemaName)
+func tenantSchemaGroupNames(roleNamePrefix string, schemaName string) SchemaGroups {
+	tenantSchemaPrefix := tenantSchemaPrefix(roleNamePrefix, schemaName)
 
 	admin := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, schemaAdminSuffix, groupSuffix)
 	readwrite := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, rwSuffix, groupSuffix)
@@ -31,8 +30,8 @@ func tenantSchemaGroupNames(dbName string, schemaName string) SchemaGroups {
 	}
 }
 
-func newTenantSchemaUserCredentials(dbName string, schemaName string) SchemaUsers {
-	tenantSchemaPrefix := tenantSchemaPrefix(dbName, schemaName)
+func newTenantSchemaUserCredentials(roleNamePrefix string, schemaName string) SchemaUsers {
+	tenantSchemaPrefix := tenantSchemaPrefix(roleNamePrefix, schemaName)
 
 	adminUsername := fmt.Sprintf("%s%s%s", tenantSchemaPrefix, schemaAdminSuffix, userSuffix)
 	adminPassword, _ := GenerateRandomPassword(PasswordConfig{})
@@ -118,18 +117,18 @@ func appendToFile(filename string, content string) {
 	f, err := os.OpenFile(filename,
 		os.O_APPEND|os.O_CREATE|os.O_WRONLY, outFileMode)
 	if err != nil {
-		log.Println(err)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 	}
 
 	defer f.Close()
 
 	if _, err := f.WriteString(content); err != nil {
-		log.Println(err)
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 	}
 }
 
 func truncateFile(filename string) {
-	if fErr := os.Truncate(filename, 0); fErr != nil {
-		log.Printf("failed to truncate: %v", fErr)
+	if err := os.Truncate(filename, 0); err != nil {
+		fmt.Fprintf(os.Stderr, "failed: %v\n", err)
 	}
 }
