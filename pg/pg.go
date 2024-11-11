@@ -191,20 +191,35 @@ func (pg *Postgres) DropDB(ctx context.Context, dbName string) {
 	}
 }
 
+func (pg *Postgres) CreateGroup(ctx context.Context, groupname string) (err error) {
+	createGroup := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", groupname)
+	_, err = pg.RunExec(pg.db, ctx, createGroup)
+	return
+}
+
 func (pg *Postgres) NewTenantSchemaGroups(ctx context.Context, roleNamePrefix string, schemaName string) SchemaGroups {
 	pg.DropTenantSchemaGroups(ctx, roleNamePrefix, schemaName)
 
 	schemaGroups := tenantSchemaGroupNames(roleNamePrefix, schemaName)
 
-	createAdminGroup := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", schemaGroups.Admin)
-	createRWGroup := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", schemaGroups.ReadWrite)
-	createROGroup := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", schemaGroups.ReadOnly)
-
-	pg.RunExec(pg.db, ctx, createAdminGroup)
-	pg.RunExec(pg.db, ctx, createRWGroup)
-	pg.RunExec(pg.db, ctx, createROGroup)
+	pg.CreateGroup(ctx, schemaGroups.Admin)
+	pg.CreateGroup(ctx, schemaGroups.ReadWrite)
+	pg.CreateGroup(ctx, schemaGroups.ReadOnly)
 
 	return schemaGroups
+}
+
+func (pg *Postgres) CreateUser(ctx context.Context, user UserCredentials, groupname string) (err error) {
+	createUser := fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s';", user.Username, user.Password)
+	grantGroup := fmt.Sprintf("GRANT %s TO %s;", groupname, user.Username)
+
+	_, err = pg.RunExec(pg.db, ctx, createUser)
+
+	if groupname != "" {
+		_, err = pg.RunExec(pg.db, ctx, grantGroup)
+	}
+
+	return
 }
 
 func (pg *Postgres) NewTenantSchemaUsers(ctx context.Context, roleNamePrefix string, schemaName string) SchemaUsers {
@@ -213,23 +228,9 @@ func (pg *Postgres) NewTenantSchemaUsers(ctx context.Context, roleNamePrefix str
 	schemaGroups := tenantSchemaGroupNames(roleNamePrefix, schemaName)
 	schemaUsers := newTenantSchemaUserCredentials(roleNamePrefix, schemaName)
 
-	createAdminUser := fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s';", schemaUsers.Admin.Username, schemaUsers.Admin.Password)
-	grantAdmin := fmt.Sprintf("GRANT %s TO %s;", schemaGroups.Admin, schemaUsers.Admin.Username)
-
-	createRWUser := fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s';", schemaUsers.ReadWrite.Username, schemaUsers.ReadWrite.Password)
-	grantRW := fmt.Sprintf("GRANT %s TO %s;", schemaGroups.ReadWrite, schemaUsers.ReadWrite.Username)
-
-	createROUser := fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD '%s';", schemaUsers.ReadOnly.Username, schemaUsers.ReadOnly.Password)
-	grantRO := fmt.Sprintf("GRANT %s TO %s;", schemaGroups.ReadOnly, schemaUsers.ReadOnly.Username)
-
-	pg.RunExec(pg.db, ctx, createAdminUser)
-	pg.RunExec(pg.db, ctx, grantAdmin)
-
-	pg.RunExec(pg.db, ctx, createRWUser)
-	pg.RunExec(pg.db, ctx, grantRW)
-
-	pg.RunExec(pg.db, ctx, createROUser)
-	pg.RunExec(pg.db, ctx, grantRO)
+	pg.CreateUser(ctx, schemaUsers.Admin, schemaGroups.Admin)
+	pg.CreateUser(ctx, schemaUsers.ReadWrite, schemaGroups.ReadWrite)
+	pg.CreateUser(ctx, schemaUsers.ReadOnly, schemaGroups.ReadOnly)
 
 	return schemaUsers
 }
@@ -245,7 +246,6 @@ func (pg *Postgres) NewTenantDB(ctx context.Context, dbName string, tenantName s
 
 	// begin definitions
 
-	createOwner := fmt.Sprintf("CREATE ROLE %s WITH NOLOGIN;", ownerRole)
 	createDB := fmt.Sprintf("CREATE DATABASE %s;", dbName)
 	alterDB := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s;", dbName, ownerRole)
 
@@ -258,7 +258,7 @@ func (pg *Postgres) NewTenantDB(ctx context.Context, dbName string, tenantName s
 	pg.DropDB(ctx, dbName)
 	pg.DropRole(ctx, ownerRole)
 
-	_, err = pg.RunExec(pg.db, ctx, createOwner)
+	err = pg.CreateGroup(ctx, ownerRole)
 	if err != nil {
 		err = fmt.Errorf("unable to create owner role: %w", err)
 		return
