@@ -19,14 +19,15 @@ type Postgres struct {
 }
 
 var (
-	pgInstance    *Postgres
-	pgOnce        sync.Once
-	pgCurrentRole string
+	pgInstance *Postgres
+	pgOnce     sync.Once
 )
 
 func Connect(ctx context.Context, connString string) (*Postgres, error) {
+	var err error
 	pgOnce.Do(func() {
-		db, err := pgxpool.New(ctx, connString)
+		var db *pgxpool.Pool
+		db, err = pgxpool.New(ctx, connString)
 		if err != nil {
 			err = fmt.Errorf("unable to create connection pool: %w", err)
 			return
@@ -46,7 +47,7 @@ func Connect(ctx context.Context, connString string) (*Postgres, error) {
 		truncateFile(outSQLFile)
 	}
 
-	return pgInstance, nil
+	return pgInstance, err
 }
 
 func (pg *Postgres) ConnectDB(ctx context.Context, connConfig ConnectDBConfig) (pool *pgxpool.Pool, err error) {
@@ -72,7 +73,7 @@ func (pg *Postgres) ConnectDB(ctx context.Context, connConfig ConnectDBConfig) (
 		}
 
 		config.BeforeClose = func(conn *pgx.Conn) {
-			resetRole := fmt.Sprintf("RESET ROLE;")
+			resetRole := "RESET ROLE;"
 			pg.RunExec(conn, ctx, resetRole)
 			if outSQLFile != "" {
 				appendToFile(outSQLFile, fmt.Sprintf("-- closing connection to database %s\n", conn.Config().Database))
@@ -251,7 +252,7 @@ func (pg *Postgres) NewTenantDB(ctx context.Context, dbName string, tenantName s
 
 	// revoke all privileges from PUBLIC
 	revokeDBPublic := fmt.Sprintf("REVOKE ALL ON DATABASE %s FROM PUBLIC;", dbName)
-	revokeSchemaPublic := fmt.Sprintf("REVOKE CREATE ON SCHEMA public FROM PUBLIC;")
+	revokeSchemaPublic := "REVOKE CREATE ON SCHEMA public FROM PUBLIC;"
 
 	// begin executions
 
@@ -301,6 +302,113 @@ func (pg *Postgres) NewTenantDB(ctx context.Context, dbName string, tenantName s
 
 		return
 	}()
+
+	return
+}
+
+func (pg *Postgres) SetSchemaGroupPermissions(ctx context.Context, schemaName string, schemaGroups SchemaGroups, connConfig ConnectDBConfig) (err error) {
+
+	dbName := connConfig.DBName
+	ownerRole := connConfig.RoleName
+
+	if dbName == "" {
+		err = fmt.Errorf("missing database name: %w", err)
+		return
+	}
+
+	if ownerRole == "" {
+		err = fmt.Errorf("missing schema owner role name: %w", err)
+		return
+	}
+
+	if schemaName == "" {
+		err = fmt.Errorf("missing schema name: %w", err)
+		return
+	}
+
+	// grant basic privileges
+	grantDBAccess := fmt.Sprintf(
+		"GRANT CONNECT, TEMPORARY ON DATABASE %s TO %s;",
+		dbName, fmt.Sprintf("%s, %s, %s", schemaGroups.Admin, schemaGroups.ReadWrite, schemaGroups.ReadOnly),
+	)
+
+	grantSchemaUsage := fmt.Sprintf(
+		"GRANT USAGE ON SCHEMA %s TO %s;",
+		schemaName, fmt.Sprintf("%s, %s", schemaGroups.ReadWrite, schemaGroups.ReadOnly),
+	)
+
+	grantTablesRead := fmt.Sprintf(
+		"GRANT SELECT ON ALL TABLES IN SCHEMA %s TO %s;",
+		schemaName, fmt.Sprintf("%s, %s", schemaGroups.ReadWrite, schemaGroups.ReadOnly),
+	)
+
+	grantSequencesRead := fmt.Sprintf(
+		"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %s TO %s;",
+		schemaName, fmt.Sprintf("%s, %s", schemaGroups.ReadWrite, schemaGroups.ReadOnly),
+	)
+
+	// partial cmd
+	defaultAlter := fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s", schemaName)
+
+	grantDefaultSequencesRead := fmt.Sprintf(
+		"%s GRANT USAGE, SELECT ON SEQUENCES TO %s;",
+		defaultAlter, fmt.Sprintf("%s, %s", schemaGroups.ReadWrite, schemaGroups.ReadOnly),
+	)
+
+	grantDefaultSequencesWrite := fmt.Sprintf(
+		"%s GRANT UPDATE ON SEQUENCES TO %s;",
+		defaultAlter, schemaGroups.ReadWrite,
+	)
+
+	grantDefaultTablesRead := fmt.Sprintf(
+		"%s GRANT SELECT ON TABLES TO %s;",
+		defaultAlter, schemaGroups.ReadOnly,
+	)
+
+	grantDefaultTablesReadWrite := fmt.Sprintf(
+		"%s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s;",
+		defaultAlter, schemaGroups.ReadWrite,
+	)
+
+	_, err = pg.RunExec(pg.db, ctx, grantDBAccess)
+	if err != nil {
+		return
+	}
+
+	_, err = pg.RunExec(pg.db, ctx, grantSchemaUsage)
+	if err != nil {
+		return
+	}
+
+	_, err = pg.RunExec(pg.db, ctx, grantTablesRead)
+	if err != nil {
+		return
+	}
+
+	_, err = pg.RunExec(pg.db, ctx, grantSequencesRead)
+	if err != nil {
+		return
+	}
+
+	_, err = pg.RunExec(pg.db, ctx, grantDefaultSequencesRead)
+	if err != nil {
+		return
+	}
+
+	_, err = pg.RunExec(pg.db, ctx, grantDefaultSequencesWrite)
+	if err != nil {
+		return
+	}
+
+	_, err = pg.RunExec(pg.db, ctx, grantDefaultTablesRead)
+	if err != nil {
+		return
+	}
+
+	_, err = pg.RunExec(pg.db, ctx, grantDefaultTablesReadWrite)
+	if err != nil {
+		return
+	}
 
 	return
 }
@@ -377,6 +485,7 @@ func (pg *Postgres) NewTenantSchema(ctx context.Context, schemaName string, tena
 	grantSchemaAdminCreate := fmt.Sprintf("GRANT USAGE, CREATE ON SCHEMA %s TO %s;", schemaName, tenantGroups.Admin)
 	grantSchemaAdminTables := fmt.Sprintf("GRANT ALL ON ALL TABLES IN SCHEMA %s TO %s;", schemaName, tenantGroups.Admin)
 	grantSchemaAdminSequences := fmt.Sprintf("GRANT ALL ON ALL SEQUENCES IN SCHEMA %s TO %s;", schemaName, tenantGroups.Admin)
+	grantSchemaAdminFunctions := fmt.Sprintf("GRANT ALL ON ALL FUNCTIONS IN SCHEMA %s TO %s;", schemaName, tenantGroups.Admin)
 
 	// basic privileges
 
@@ -393,6 +502,11 @@ func (pg *Postgres) NewTenantSchema(ctx context.Context, schemaName string, tena
 	grantSequencesRead := fmt.Sprintf(
 		"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %s TO %s;",
 		schemaName, fmt.Sprintf("%s, %s", tenantGroups.ReadWrite, tenantGroups.ReadOnly),
+	)
+
+	grantSequencesUpdate := fmt.Sprintf(
+		"GRANT UPDATE ON ALL SEQUENCES IN SCHEMA %s TO %s;",
+		schemaName, tenantGroups.ReadWrite,
 	)
 
 	// default privileges
@@ -442,10 +556,12 @@ func (pg *Postgres) NewTenantSchema(ctx context.Context, schemaName string, tena
 		pg.RunExec(conn, ctx, grantSchemaAdminCreate)
 		pg.RunExec(conn, ctx, grantSchemaAdminTables)
 		pg.RunExec(conn, ctx, grantSchemaAdminSequences)
+		pg.RunExec(conn, ctx, grantSchemaAdminFunctions)
 
 		pg.RunExec(conn, ctx, grantSchemaUsage)
 		pg.RunExec(conn, ctx, grantTablesRead)
 		pg.RunExec(conn, ctx, grantSequencesRead)
+		pg.RunExec(conn, ctx, grantSequencesUpdate)
 
 		pg.RunExec(conn, ctx, grantDefaultSequencesRead)
 		pg.RunExec(conn, ctx, grantDefaultSequencesWrite)
